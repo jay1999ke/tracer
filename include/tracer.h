@@ -5,8 +5,7 @@
 #include <vector>
 
 namespace tracer {
-    std::vector<std::string> get_stacktrace(int skip = 1);
-    void print_stacktrace(int skip = 1);
-}
+void print_stacktrace(int skip = 0);
+} // namespace tracer
 
 #endif

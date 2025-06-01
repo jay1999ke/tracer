@@ -1,26 +1,29 @@
 #include "tracer.h"
-#include <cxxabi.h>
 #include <dlfcn.h>
-#include <execinfo.h>
 #include <iostream>
 #include <memory>
 #include <optional>
-#include <sstream>
 #include <string>
 #include <vector>
 
 namespace tracer {
 
-int _backtrace(void *callstack, int16_t max_frame_count) { return 0; }
+using Trace = std::tuple<uint64_t, std::string, std::string>;
 
-long get_rbp_content() {
-    long content;
+void pretty_print_trace(Trace &trace) {
+    std::cout << "[0x" << std::hex << std::get<0>(trace) << "]\t"
+              << std::get<1>(trace) << " (" << std::get<2>(trace) << ")"
+              << std::endl;
+}
+
+uint64_t get_rbp_content() {
+    uint64_t content;
     asm volatile("mov %%rbp, %0" : "=r"(content));
     return content;
 }
 
-long get_value_at_address(long address) {
-    long content;
+uint64_t get_value_at_address(uint64_t address) {
+    uint64_t content;
     asm volatile(
         "mov (%1), %0" // Move the value at the address pointed to by %1 into %0
         : "=r"(content) // Output: content will store the value
@@ -29,24 +32,12 @@ long get_value_at_address(long address) {
     return content;
 }
 
-std::vector<std::string> get_stacktrace(int skip) {
-    void *callstack[128];
-    int nFrames = backtrace(callstack, 128);
-    char **symbols = backtrace_symbols(callstack, nFrames);
+uint64_t get_callers_rip(uint64_t rbp) { return rbp + 8; }
 
-    std::vector<std::string> trace;
-    for (int i = skip; i < nFrames; ++i) {
-        trace.push_back(std::string(symbols[i]));
-    }
-    free(symbols);
-    return trace;
-}
-
-using namespace std;
-
-std::optional<std::unique_ptr<Dl_info>> get_caller_info_using_rbp(long rbp) {
-    long rip = rbp + 8;
-    long caller_addr = get_value_at_address(rip);
+std::optional<std::unique_ptr<Dl_info>>
+get_caller_info_using_rbp(uint64_t rbp) {
+    uint64_t rip = get_callers_rip(rbp);
+    uint64_t caller_addr = get_value_at_address(rip);
 
     Dl_info info;
     if (dladdr(reinterpret_cast<void *>(caller_addr), &info)) {
@@ -57,27 +48,34 @@ std::optional<std::unique_ptr<Dl_info>> get_caller_info_using_rbp(long rbp) {
 }
 
 void print_stacktrace(int skip) {
-    long rbp = get_rbp_content();
+    uint64_t rbp = get_rbp_content();
 
     auto info = get_caller_info_using_rbp(rbp);
     if (info.has_value()) {
-        // don't care about this function! print_stacktrace
+        // don't care about this function! (print_stacktrace)
     }
 
-    std::vector<std::string> trace;
+    std::vector<Trace> traces;
 
-    long prev_rbp = rbp;
+    uint64_t prev_rbp = rbp;
     while (info.has_value()) {
         rbp = prev_rbp;
         prev_rbp = get_value_at_address(rbp);
         info = get_caller_info_using_rbp(prev_rbp);
-        if (info.has_value()) {
-            trace.push_back(std::string(info.value().get()->dli_sname));
+        if (info.has_value() && skip == 0) {
+            traces.push_back({
+                get_value_at_address(get_callers_rip(rbp)),
+                std::string(info.value().get()->dli_sname),
+                std::string(info.value().get()->dli_fname),
+            });
+        }
+        if (skip > 0) {
+            skip--;
         }
     }
 
-    for (auto t : trace) {
-        std::cout << "func: " << t << std::endl;
+    for (auto &trace : traces) {
+        pretty_print_trace(trace);
     }
 }
 } // namespace tracer
